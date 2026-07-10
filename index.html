@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Bússola — dashboard</title>
 <link rel="icon" href="data:,">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
   * { box-sizing: border-box; }
@@ -48,6 +49,11 @@
   .setup-box label { font-size:12.5px; color:#8A968B; display:block; margin:14px 0 6px; }
   .setup-box input { width:100%; background:#12160F; border:1px solid #2A332B; color:#EDF2ED; border-radius:8px; padding:10px; font-size:13px; font-family:'IBM Plex Mono', monospace; }
   .erro { background:#2A1615; border:1px solid #6B2A26; color:#F2B8B4; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; }
+  .charts-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:1080px; margin:16px auto 0; }
+  @media (max-width:900px) { .charts-row { grid-template-columns:1fr; } }
+  .charts-row.full { grid-template-columns:1fr; }
+  .chart-titulo { font-size:12.5px; color:#8A968B; margin-bottom:12px; font-weight:600; }
+  .chart-box { position:relative; height:220px; }
 </style>
 </head>
 <body>
@@ -71,9 +77,12 @@ let estado = {
   periodo: 'mes',
   resumo: null,
   transacoes: [],
+  serieMensal: null,
   carregando: true,
   erro: null,
 };
+
+let charts = {};
 
 async function carregarDados() {
   const cfg = getConfig();
@@ -82,14 +91,17 @@ async function carregarDados() {
   estado.erro = null;
   render();
   try {
-    const [resResumo, resTx] = await Promise.all([
-      fetch(cfg.workerUrl.replace(/\/$/, '') + '/api/resumo?periodo=' + estado.periodo + '&token=' + encodeURIComponent(cfg.token)),
-      fetch(cfg.workerUrl.replace(/\/$/, '') + '/api/transacoes?token=' + encodeURIComponent(cfg.token)),
+    const base = cfg.workerUrl.replace(/\/$/, '');
+    const [resResumo, resTx, resSerie] = await Promise.all([
+      fetch(base + '/api/resumo?periodo=' + estado.periodo + '&token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/transacoes?token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/serie-mensal?meses=6&token=' + encodeURIComponent(cfg.token)),
     ]);
-    if (!resResumo.ok || !resTx.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
+    if (!resResumo.ok || !resTx.ok || !resSerie.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
     estado.resumo = await resResumo.json();
     const dadosTx = await resTx.json();
     estado.transacoes = dadosTx.transacoes || [];
+    estado.serieMensal = await resSerie.json();
   } catch (err) {
     estado.erro = err.message || 'Não consegui carregar os dados.';
   } finally {
@@ -221,7 +233,105 @@ function render() {
         ${alertaHtml}
       </div>
     </div>
+
+    ${estado.serieMensal ? `
+    <div class="charts-row">
+      <div class="card">
+        <div class="chart-titulo">Evolução do saldo (últimos 6 meses)</div>
+        <div class="chart-box"><canvas id="chart-saldo"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="chart-titulo">Entradas x saídas por mês</div>
+        <div class="chart-box"><canvas id="chart-entradas-saidas"></canvas></div>
+      </div>
+    </div>
+    <div class="charts-row full">
+      <div class="card">
+        <div class="chart-titulo">Categorias ao longo do tempo (top 5)</div>
+        <div class="chart-box"><canvas id="chart-categorias"></canvas></div>
+      </div>
+    </div>
+    ` : ''}
   `;
+
+  if (estado.serieMensal) desenharGraficos(estado.serieMensal);
+}
+
+function labelMes(chave) {
+  const [ano, mes] = chave.split('-').map(Number);
+  const d = new Date(ano, mes - 1, 1);
+  return d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+}
+
+const OPCOES_CHART_BASE = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#C7D0C8', font: { family: 'Inter', size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#8A968B', font: { family: 'Inter', size: 11 } }, grid: { color: '#202820' } },
+    y: { ticks: { color: '#8A968B', font: { family: 'IBM Plex Mono', size: 10 } }, grid: { color: '#202820' } },
+  },
+};
+
+function desenharGraficos(dados) {
+  const labels = dados.serie.map((m) => labelMes(m.mes));
+
+  Object.values(charts).forEach((c) => c && c.destroy());
+
+  const ctxSaldo = document.getElementById('chart-saldo');
+  if (ctxSaldo) {
+    charts.saldo = new Chart(ctxSaldo, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Saldo',
+          data: dados.serie.map((m) => m.saldo),
+          borderColor: '#4CC38A',
+          backgroundColor: 'rgba(76,195,138,0.15)',
+          fill: true,
+          tension: 0.3,
+          pointBackgroundColor: '#4CC38A',
+        }],
+      },
+      options: { ...OPCOES_CHART_BASE, plugins: { legend: { display: false } } },
+    });
+  }
+
+  const ctxEntSai = document.getElementById('chart-entradas-saidas');
+  if (ctxEntSai) {
+    charts.entradasSaidas = new Chart(ctxEntSai, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Entradas', data: dados.serie.map((m) => m.entradas), backgroundColor: '#4CC38A' },
+          { label: 'Saídas', data: dados.serie.map((m) => m.saidas), backgroundColor: '#E2574C' },
+        ],
+      },
+      options: OPCOES_CHART_BASE,
+    });
+  }
+
+  const ctxCat = document.getElementById('chart-categorias');
+  if (ctxCat && dados.topCategorias && dados.topCategorias.length) {
+    const cores = ['#4CC38A', '#E3A548', '#5B8DEF', '#E2574C', '#B679D6'];
+    charts.categorias = new Chart(ctxCat, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: dados.topCategorias.map((cat, i) => ({
+          label: cat,
+          data: dados.serie.map((m) => m.categorias[cat] || 0),
+          borderColor: cores[i % cores.length],
+          backgroundColor: cores[i % cores.length],
+          tension: 0.3,
+          pointRadius: 3,
+        })),
+      },
+      options: OPCOES_CHART_BASE,
+    });
+  }
 }
 
 carregarDados();
