@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bússola — dashboard</title>
+<link rel="icon" href="data:,">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0F1310; color:#EDF2ED; font-family:'Inter',sans-serif; padding:20px 16px 60px; }
+  ::placeholder { color:#6b7a6d; }
+  input:focus, select:focus, button:focus-visible { outline:2px solid #4CC38A; outline-offset:2px; }
+  .wordmark { font-family:'Fraunces', serif; font-weight:600; font-size:30px; letter-spacing:-0.01em; }
+  .tagline { color:#7C8A7D; font-size:13px; }
+  .header-row { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; justify-content:space-between; }
+  .grid { display:grid; grid-template-columns:1.3fr 1fr; gap:16px; max-width:1080px; margin:16px auto 0; }
+  @media (max-width:720px) { .grid { grid-template-columns:1fr; } }
+  .card { background:#171D18; border:1px solid #232B25; border-radius:14px; padding:16px; }
+  .card-alerta { background:#211C13; border:1px solid #4A3B1E; border-radius:14px; padding:16px; }
+  .feed { background:#141914; border:1px solid #202820; border-radius:14px; padding:6px; display:flex; flex-direction:column; gap:2px; max-height:600px; overflow-y:auto; }
+  .linha { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; gap:8px; flex-wrap:wrap; }
+  .linha:hover { background:#1c231d; }
+  .linha-esq { display:flex; gap:10px; align-items:center; min-width:0; }
+  .dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .desc { font-size:13.5px; font-weight:500; }
+  .meta-linha { font-size:11px; color:#6B786C; margin-top:1px; }
+  .chip { background:#1F2620; border:1px solid #2A332B; border-radius:20px; padding:4px 8px; font-size:11.5px; }
+  .valor { font-family:'IBM Plex Mono', monospace; font-size:13.5px; font-weight:600; min-width:88px; text-align:right; }
+  .tabs { display:flex; gap:4px; background:#12160F; padding:4px; border-radius:10px; margin-bottom:12px; }
+  .tab { flex:1; background:transparent; border:none; color:#8A968B; padding:6px 8px; border-radius:7px; font-size:12.5px; cursor:pointer; font-family:inherit; }
+  .tab.ativa { background:#232B25; color:#EDF2ED; font-weight:600; }
+  .saldo-label { font-size:12px; color:#8A968B; }
+  .saldo-valor { font-family:'IBM Plex Mono', monospace; font-size:28px; font-weight:600; margin:2px 0 10px; }
+  .duas-colunas { display:flex; gap:24px; }
+  .mini-label { font-size:11px; color:#8A968B; }
+  .mini-valor { font-family:'IBM Plex Mono', monospace; font-size:14.5px; font-weight:600; }
+  .categorias-titulo { font-size:12.5px; color:#8A968B; margin-bottom:10px; font-weight:600; }
+  .barra-linha { margin-bottom:10px; }
+  .barra-topo { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
+  .barra-valor { font-family:'IBM Plex Mono', monospace; color:#C7D0C8; }
+  .barra-track { height:7px; border-radius:6px; overflow:hidden; background:#20271F; }
+  .barra-fill { height:100%; border-radius:6px; }
+  .vazio { color:#6B786C; font-size:13px; padding:24px 14px; text-align:center; }
+  .btn { background:#4CC38A; color:#0F1310; border:none; border-radius:10px; padding:10px 16px; font-weight:600; cursor:pointer; font-size:13px; }
+  .btn-ghost { background:transparent; color:#9AA69B; border:1px solid #2A332B; border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12.5px; }
+  .setup-box { max-width:420px; margin:80px auto; background:#171D18; border:1px solid #232B25; border-radius:14px; padding:24px; }
+  .setup-box label { font-size:12.5px; color:#8A968B; display:block; margin:14px 0 6px; }
+  .setup-box input { width:100%; background:#12160F; border:1px solid #2A332B; color:#EDF2ED; border-radius:8px; padding:10px; font-size:13px; font-family:'IBM Plex Mono', monospace; }
+  .erro { background:#2A1615; border:1px solid #6B2A26; color:#F2B8B4; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+const API_CONFIG_KEY = 'bussola-config';
+
+function getConfig() {
+  try { return JSON.parse(localStorage.getItem(API_CONFIG_KEY)); } catch { return null; }
+}
+function setConfig(cfg) {
+  localStorage.setItem(API_CONFIG_KEY, JSON.stringify(cfg));
+}
+function fmtMoeda(v) {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+let estado = {
+  periodo: 'mes',
+  resumo: null,
+  transacoes: [],
+  carregando: true,
+  erro: null,
+};
+
+async function carregarDados() {
+  const cfg = getConfig();
+  if (!cfg) { renderSetup(); return; }
+  estado.carregando = true;
+  estado.erro = null;
+  render();
+  try {
+    const [resResumo, resTx] = await Promise.all([
+      fetch(cfg.workerUrl.replace(/\/$/, '') + '/api/resumo?periodo=' + estado.periodo + '&token=' + encodeURIComponent(cfg.token)),
+      fetch(cfg.workerUrl.replace(/\/$/, '') + '/api/transacoes?token=' + encodeURIComponent(cfg.token)),
+    ]);
+    if (!resResumo.ok || !resTx.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
+    estado.resumo = await resResumo.json();
+    const dadosTx = await resTx.json();
+    estado.transacoes = dadosTx.transacoes || [];
+  } catch (err) {
+    estado.erro = err.message || 'Não consegui carregar os dados.';
+  } finally {
+    estado.carregando = false;
+    render();
+  }
+}
+
+function renderSetup(msgErro) {
+  document.getElementById('app').innerHTML = `
+    <div class="setup-box">
+      <div class="wordmark">Bússola</div>
+      <div class="tagline">conectar ao seu bot</div>
+      ${msgErro ? `<div class="erro" style="margin-top:16px;">${msgErro}</div>` : ''}
+      <label>URL do Worker (Cloudflare)</label>
+      <input id="in-url" placeholder="https://bussola-bot.seunome.workers.dev" />
+      <label>Token do dashboard</label>
+      <input id="in-token" placeholder="o mesmo valor do DASHBOARD_TOKEN" />
+      <button class="btn" style="margin-top:18px; width:100%;" onclick="salvarConfig()">Conectar</button>
+    </div>
+  `;
+}
+
+function salvarConfig() {
+  const url = document.getElementById('in-url').value.trim();
+  const token = document.getElementById('in-token').value.trim();
+  if (!url || !token) return;
+  setConfig({ workerUrl: url, token });
+  carregarDados();
+}
+
+function trocarPeriodo(p) {
+  estado.periodo = p;
+  carregarDados();
+}
+
+function desconectar() {
+  localStorage.removeItem(API_CONFIG_KEY);
+  render();
+}
+
+function render() {
+  const cfg = getConfig();
+  if (!cfg) { renderSetup(); return; }
+
+  const app = document.getElementById('app');
+  const periodos = [['dia','Dia'],['semana','Semana'],['mes','Mês'],['ano','Ano']];
+
+  let categoriasHtml = '';
+  let alertaHtml = '';
+  if (estado.resumo && estado.resumo.categorias && estado.resumo.categorias.length) {
+    const maior = Math.max(...estado.resumo.categorias.map(c => c.valor));
+    categoriasHtml = estado.resumo.categorias.map(c => `
+      <div class="barra-linha">
+        <div class="barra-topo"><span>${c.nome}</span><span class="barra-valor">${fmtMoeda(c.valor)}</span></div>
+        <div class="barra-track"><div class="barra-fill" style="width:${(c.valor/maior*100)}%; background:${c.reducivel ? '#E3A548' : '#4CC38A'};"></div></div>
+      </div>
+    `).join('');
+
+    const reduziveis = estado.resumo.categorias.filter(c => c.reducivel);
+    const totalReduzivel = reduziveis.reduce((s,c) => s + c.valor, 0);
+    if (totalReduzivel > 0) {
+      alertaHtml = `
+        <div class="card-alerta">
+          <div style="font-weight:600; font-size:13.5px; margin-bottom:8px;">💡 Gastos possivelmente redutíveis</div>
+          <div style="font-size:13px; color:#C9BFA3; line-height:1.5;">Neste período, <b>${fmtMoeda(totalReduzivel)}</b> foram para categorias que costumam dar espaço pra economia:</div>
+          <ul style="margin:10px 0; padding-left:18px; font-size:12.5px; color:#D8CDAE; line-height:1.9;">
+            ${reduziveis.map(c => `<li>${c.nome} — ${fmtMoeda(c.valor)}</li>`).join('')}
+          </ul>
+        </div>
+      `;
+    }
+  }
+
+  const feedHtml = estado.transacoes.length === 0
+    ? '<div class="vazio">Nenhum lançamento ainda.</div>'
+    : estado.transacoes.map(t => {
+        const cor = t.tipo === 'entrada' ? '#4CC38A' : '#E2574C';
+        const data = new Date(t.data_hora);
+        return `
+          <div class="linha">
+            <div class="linha-esq">
+              <span class="dot" style="background:${cor};"></span>
+              <div>
+                <div class="desc">${t.descricao || t.texto}</div>
+                <div class="meta-linha">${data.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} · ${data.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="chip">${t.categoria}</span>
+              <span class="valor" style="color:${cor};">${t.tipo === 'entrada' ? '+' : '−'} ${fmtMoeda(t.valor)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+  app.innerHTML = `
+    <div class="header-row">
+      <div>
+        <span class="wordmark">Bússola</span>
+        <span class="tagline" style="margin-left:10px;">seu dinheiro, sua direção</span>
+      </div>
+      <button class="btn-ghost" onclick="desconectar()">Trocar conexão</button>
+    </div>
+
+    ${estado.erro ? `<div class="erro" style="max-width:1080px; margin:14px auto 0;">${estado.erro}</div>` : ''}
+
+    <div class="grid">
+      <div>
+        <div class="feed">
+          ${estado.carregando ? '<div class="vazio">Carregando…</div>' : feedHtml}
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <div class="tabs">
+            ${periodos.map(([p,label]) => `<button class="tab ${estado.periodo===p?'ativa':''}" onclick="trocarPeriodo('${p}')">${label}</button>`).join('')}
+          </div>
+          ${estado.resumo ? `
+            <div class="saldo-label">Saldo do período</div>
+            <div class="saldo-valor" style="color:${estado.resumo.saldo>=0?'#4CC38A':'#E2574C'};">${fmtMoeda(estado.resumo.saldo)}</div>
+            <div class="duas-colunas">
+              <div><div class="mini-label">Entradas</div><div class="mini-valor" style="color:#4CC38A;">${fmtMoeda(estado.resumo.entradas)}</div></div>
+              <div><div class="mini-label">Saídas</div><div class="mini-valor" style="color:#E2574C;">${fmtMoeda(estado.resumo.saidas)}</div></div>
+            </div>
+            ${categoriasHtml ? `<div style="border-top:1px solid #202820; padding-top:12px; margin-top:14px;"><div class="categorias-titulo">Por categoria</div>${categoriasHtml}</div>` : ''}
+          ` : '<div class="vazio">Carregando…</div>'}
+        </div>
+        ${alertaHtml}
+      </div>
+    </div>
+  `;
+}
+
+carregarDados();
+</script>
+</body>
+</html>
