@@ -64,6 +64,14 @@
 const API_CONFIG_KEY = 'bussola-config';
 
 function getConfig() {
+  const params = new URLSearchParams(window.location.search);
+  const urlWorker = params.get('workerUrl');
+  const urlToken = params.get('token');
+  if (urlWorker && urlToken) {
+    const cfg = { workerUrl: urlWorker, token: urlToken };
+    setConfig(cfg);
+    return cfg;
+  }
   try { return JSON.parse(localStorage.getItem(API_CONFIG_KEY)); } catch { return null; }
 }
 function setConfig(cfg) {
