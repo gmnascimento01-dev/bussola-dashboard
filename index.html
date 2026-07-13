@@ -8,53 +8,78 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  :root {
+    --bg:#0F1310; --surface:#171D18; --feed-bg:#141914; --border:#232B25; --border-soft:#202820;
+    --hover:#1c231d; --text:#EDF2ED; --text-dim:#8A968B; --text-dim2:#6B786C; --text-dim3:#7C8A7D;
+    --chip-bg:#1F2620; --chip-border:#2A332B; --track-bg:#20271F; --tab-bg:#12160F; --tab-ativa-bg:#232B25;
+    --input-bg:#12160F; --accent-green:#4CC38A; --accent-red:#E2574C; --accent-amber:#E3A548;
+    --alerta-bg:#211C13; --alerta-border:#4A3B1E; --alerta-texto:#C9BFA3; --alerta-item:#D8CDAE;
+    --erro-bg:#2A1615; --erro-border:#6B2A26; --erro-texto:#F2B8B4;
+  }
+  [data-theme="light"] {
+    --bg:#F4F7F1; --surface:#FFFFFF; --feed-bg:#FFFFFF; --border:#E2E8DC; --border-soft:#E9EEE3;
+    --hover:#F0F4EA; --text:#1A2118; --text-dim:#5B6B5C; --text-dim2:#7A8A7B; --text-dim3:#63715F;
+    --chip-bg:#EFF3EA; --chip-border:#DCE4D6; --track-bg:#E4EADF; --tab-bg:#EAEFE5; --tab-ativa-bg:#FFFFFF;
+    --input-bg:#F4F7F1; --accent-green:#2E9E68; --accent-red:#C64B3F; --accent-amber:#B87C22;
+    --alerta-bg:#FBF1DE; --alerta-border:#E6CE9C; --alerta-texto:#6B5A32; --alerta-item:#5C4C29;
+    --erro-bg:#FBEAE7; --erro-border:#E7B4AC; --erro-texto:#8A2E24;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:#0F1310; color:#EDF2ED; font-family:'Inter',sans-serif; padding:20px 16px 60px; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; padding:20px 16px 60px; transition:background .15s ease, color .15s ease; }
   ::placeholder { color:#6b7a6d; }
-  input:focus, select:focus, button:focus-visible { outline:2px solid #4CC38A; outline-offset:2px; }
+  input:focus, select:focus, button:focus-visible { outline:2px solid var(--accent-green); outline-offset:2px; }
   .wordmark { font-family:'Fraunces', serif; font-weight:600; font-size:30px; letter-spacing:-0.01em; }
-  .tagline { color:#7C8A7D; font-size:13px; }
+  .tagline { color:var(--text-dim3); font-size:13px; }
   .header-row { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; justify-content:space-between; }
+  .header-right { display:flex; gap:8px; align-items:center; }
   .grid { display:grid; grid-template-columns:1.3fr 1fr; gap:16px; max-width:1080px; margin:16px auto 0; }
   @media (max-width:720px) { .grid { grid-template-columns:1fr; } }
-  .card { background:#171D18; border:1px solid #232B25; border-radius:14px; padding:16px; }
-  .card-alerta { background:#211C13; border:1px solid #4A3B1E; border-radius:14px; padding:16px; }
-  .feed { background:#141914; border:1px solid #202820; border-radius:14px; padding:6px; display:flex; flex-direction:column; gap:2px; max-height:600px; overflow-y:auto; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; }
+  .card-alerta { background:var(--alerta-bg); border:1px solid var(--alerta-border); border-radius:14px; padding:16px; }
+  .feed { background:var(--feed-bg); border:1px solid var(--border-soft); border-radius:14px; padding:6px; display:flex; flex-direction:column; gap:2px; max-height:600px; overflow-y:auto; }
   .linha { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; gap:8px; flex-wrap:wrap; }
-  .linha:hover { background:#1c231d; }
+  .linha:hover { background:var(--hover); }
   .linha-esq { display:flex; gap:10px; align-items:center; min-width:0; }
   .dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
   .desc { font-size:13.5px; font-weight:500; }
-  .meta-linha { font-size:11px; color:#6B786C; margin-top:1px; }
-  .chip { background:#1F2620; border:1px solid #2A332B; border-radius:20px; padding:4px 8px; font-size:11.5px; }
+  .meta-linha { font-size:11px; color:var(--text-dim2); margin-top:1px; }
+  .chip { background:var(--chip-bg); border:1px solid var(--chip-border); border-radius:20px; padding:4px 8px; font-size:11.5px; }
   .valor { font-family:'IBM Plex Mono', monospace; font-size:13.5px; font-weight:600; min-width:88px; text-align:right; }
-  .tabs { display:flex; gap:4px; background:#12160F; padding:4px; border-radius:10px; margin-bottom:12px; }
-  .tab { flex:1; background:transparent; border:none; color:#8A968B; padding:6px 8px; border-radius:7px; font-size:12.5px; cursor:pointer; font-family:inherit; }
-  .tab.ativa { background:#232B25; color:#EDF2ED; font-weight:600; }
-  .saldo-label { font-size:12px; color:#8A968B; }
+  .tabs { display:flex; gap:4px; background:var(--tab-bg); padding:4px; border-radius:10px; margin-bottom:12px; }
+  .tab { flex:1; background:transparent; border:none; color:var(--text-dim); padding:6px 8px; border-radius:7px; font-size:12.5px; cursor:pointer; font-family:inherit; }
+  .tab.ativa { background:var(--tab-ativa-bg); color:var(--text); font-weight:600; }
+  .saldo-label { font-size:12px; color:var(--text-dim); }
   .saldo-valor { font-family:'IBM Plex Mono', monospace; font-size:28px; font-weight:600; margin:2px 0 10px; }
   .duas-colunas { display:flex; gap:24px; }
-  .mini-label { font-size:11px; color:#8A968B; }
+  .mini-label { font-size:11px; color:var(--text-dim); }
   .mini-valor { font-family:'IBM Plex Mono', monospace; font-size:14.5px; font-weight:600; }
-  .categorias-titulo { font-size:12.5px; color:#8A968B; margin-bottom:10px; font-weight:600; }
+  .categorias-titulo { font-size:12.5px; color:var(--text-dim); margin-bottom:10px; font-weight:600; }
   .barra-linha { margin-bottom:10px; }
   .barra-topo { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
-  .barra-valor { font-family:'IBM Plex Mono', monospace; color:#C7D0C8; }
-  .barra-track { height:7px; border-radius:6px; overflow:hidden; background:#20271F; }
+  .barra-valor { font-family:'IBM Plex Mono', monospace; color:var(--text-dim2); }
+  .barra-track { height:7px; border-radius:6px; overflow:hidden; background:var(--track-bg); }
   .barra-fill { height:100%; border-radius:6px; }
-  .vazio { color:#6B786C; font-size:13px; padding:24px 14px; text-align:center; }
-  .btn { background:#4CC38A; color:#0F1310; border:none; border-radius:10px; padding:10px 16px; font-weight:600; cursor:pointer; font-size:13px; }
-  .btn-ghost { background:transparent; color:#9AA69B; border:1px solid #2A332B; border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12.5px; }
-  .setup-box { max-width:420px; margin:80px auto; background:#171D18; border:1px solid #232B25; border-radius:14px; padding:24px; }
-  .setup-box label { font-size:12.5px; color:#8A968B; display:block; margin:14px 0 6px; }
-  .setup-box input { width:100%; background:#12160F; border:1px solid #2A332B; color:#EDF2ED; border-radius:8px; padding:10px; font-size:13px; font-family:'IBM Plex Mono', monospace; }
-  .erro { background:#2A1615; border:1px solid #6B2A26; color:#F2B8B4; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; }
+  .vazio { color:var(--text-dim2); font-size:13px; padding:24px 14px; text-align:center; }
+  .btn { background:var(--accent-green); color:#0F1310; border:none; border-radius:10px; padding:10px 16px; font-weight:600; cursor:pointer; font-size:13px; }
+  .btn-ghost { background:transparent; color:var(--text-dim); border:1px solid var(--border); border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12.5px; }
+  .btn-icon { background:transparent; color:var(--text-dim); border:1px solid var(--border); border-radius:8px; width:34px; height:34px; cursor:pointer; font-size:15px; display:flex; align-items:center; justify-content:center; }
+  .setup-box { max-width:420px; margin:80px auto; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:24px; }
+  .setup-box label { font-size:12.5px; color:var(--text-dim); display:block; margin:14px 0 6px; }
+  .setup-box input { width:100%; background:var(--input-bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px; font-size:13px; font-family:'IBM Plex Mono', monospace; }
+  .erro { background:var(--erro-bg); border:1px solid var(--erro-border); color:var(--erro-texto); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; }
   .charts-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:1080px; margin:16px auto 0; }
   @media (max-width:900px) { .charts-row { grid-template-columns:1fr; } }
   .charts-row.full { grid-template-columns:1fr; }
-  .chart-titulo { font-size:12.5px; color:#8A968B; margin-bottom:12px; font-weight:600; }
+  .chart-titulo { font-size:12.5px; color:var(--text-dim); margin-bottom:12px; font-weight:600; }
   .chart-box { position:relative; height:220px; }
 </style>
+<script>
+  // Aplica o tema salvo antes de pintar a página, pra evitar flash de tema errado
+  (function() {
+    const salvo = localStorage.getItem('bussola-tema') || 'dark';
+    document.documentElement.setAttribute('data-theme', salvo);
+  })();
+</script>
 </head>
 <body>
 
@@ -151,6 +176,20 @@ function desconectar() {
   render();
 }
 
+function getTema() {
+  return document.documentElement.getAttribute('data-theme') || 'dark';
+}
+function alternarTema() {
+  const novo = getTema() === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', novo);
+  localStorage.setItem('bussola-tema', novo);
+  render();
+  if (estado.serieMensal) desenharGraficos(estado.serieMensal);
+}
+function corVar(nome) {
+  return getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
+}
+
 function render() {
   const cfg = getConfig();
   if (!cfg) { renderSetup(); return; }
@@ -165,7 +204,7 @@ function render() {
     categoriasHtml = estado.resumo.categorias.map(c => `
       <div class="barra-linha">
         <div class="barra-topo"><span>${c.nome}</span><span class="barra-valor">${fmtMoeda(c.valor)}</span></div>
-        <div class="barra-track"><div class="barra-fill" style="width:${(c.valor/maior*100)}%; background:${c.reducivel ? '#E3A548' : '#4CC38A'};"></div></div>
+        <div class="barra-track"><div class="barra-fill" style="width:${(c.valor/maior*100)}%; background:${c.reducivel ? 'var(--accent-amber)' : 'var(--accent-green)'};"></div></div>
       </div>
     `).join('');
 
@@ -175,8 +214,8 @@ function render() {
       alertaHtml = `
         <div class="card-alerta">
           <div style="font-weight:600; font-size:13.5px; margin-bottom:8px;">💡 Gastos possivelmente redutíveis</div>
-          <div style="font-size:13px; color:#C9BFA3; line-height:1.5;">Neste período, <b>${fmtMoeda(totalReduzivel)}</b> foram para categorias que costumam dar espaço pra economia:</div>
-          <ul style="margin:10px 0; padding-left:18px; font-size:12.5px; color:#D8CDAE; line-height:1.9;">
+          <div style="font-size:13px; color:var(--alerta-texto); line-height:1.5;">Neste período, <b>${fmtMoeda(totalReduzivel)}</b> foram para categorias que costumam dar espaço pra economia:</div>
+          <ul style="margin:10px 0; padding-left:18px; font-size:12.5px; color:var(--alerta-item); line-height:1.9;">
             ${reduziveis.map(c => `<li>${c.nome} — ${fmtMoeda(c.valor)}</li>`).join('')}
           </ul>
         </div>
@@ -187,7 +226,7 @@ function render() {
   const feedHtml = estado.transacoes.length === 0
     ? '<div class="vazio">Nenhum lançamento ainda.</div>'
     : estado.transacoes.map(t => {
-        const cor = t.tipo === 'entrada' ? '#4CC38A' : '#E2574C';
+        const cor = t.tipo === 'entrada' ? 'var(--accent-green)' : 'var(--accent-red)';
         const data = new Date(t.data_hora);
         return `
           <div class="linha">
@@ -212,7 +251,10 @@ function render() {
         <span class="wordmark">Bússola</span>
         <span class="tagline" style="margin-left:10px;">seu dinheiro, sua direção</span>
       </div>
-      <button class="btn-ghost" onclick="desconectar()">Trocar conexão</button>
+      <div class="header-right">
+        <button class="btn-icon" onclick="alternarTema()" title="Alternar tema">${getTema() === 'dark' ? '☀️' : '🌙'}</button>
+        <button class="btn-ghost" onclick="desconectar()">Trocar conexão</button>
+      </div>
     </div>
 
     ${estado.erro ? `<div class="erro" style="max-width:1080px; margin:14px auto 0;">${estado.erro}</div>` : ''}
@@ -230,10 +272,10 @@ function render() {
           </div>
           ${estado.resumo ? `
             <div class="saldo-label">Saldo do período</div>
-            <div class="saldo-valor" style="color:${estado.resumo.saldo>=0?'#4CC38A':'#E2574C'};">${fmtMoeda(estado.resumo.saldo)}</div>
+            <div class="saldo-valor" style="color:${estado.resumo.saldo>=0?'var(--accent-green)':'var(--accent-red)'};">${fmtMoeda(estado.resumo.saldo)}</div>
             <div class="duas-colunas">
-              <div><div class="mini-label">Entradas</div><div class="mini-valor" style="color:#4CC38A;">${fmtMoeda(estado.resumo.entradas)}</div></div>
-              <div><div class="mini-label">Saídas</div><div class="mini-valor" style="color:#E2574C;">${fmtMoeda(estado.resumo.saidas)}</div></div>
+              <div><div class="mini-label">Entradas</div><div class="mini-valor" style="color:var(--accent-green);">${fmtMoeda(estado.resumo.entradas)}</div></div>
+              <div><div class="mini-label">Saídas</div><div class="mini-valor" style="color:var(--accent-red);">${fmtMoeda(estado.resumo.saidas)}</div></div>
             </div>
             ${categoriasHtml ? `<div style="border-top:1px solid #202820; padding-top:12px; margin-top:14px;"><div class="categorias-titulo">Por categoria</div>${categoriasHtml}</div>` : ''}
           ` : '<div class="vazio">Carregando…</div>'}
@@ -271,15 +313,19 @@ function labelMes(chave) {
   return d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
 }
 
-const OPCOES_CHART_BASE = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: { legend: { labels: { color: '#C7D0C8', font: { family: 'Inter', size: 11 } } } },
-  scales: {
-    x: { ticks: { color: '#8A968B', font: { family: 'Inter', size: 11 } }, grid: { color: '#202820' } },
-    y: { ticks: { color: '#8A968B', font: { family: 'IBM Plex Mono', size: 10 } }, grid: { color: '#202820' } },
-  },
-};
+function getOpcoesChartBase() {
+  const textDim = corVar('--text-dim');
+  const borderSoft = corVar('--border-soft');
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: textDim, font: { family: 'Inter', size: 11 } } } },
+    scales: {
+      x: { ticks: { color: textDim, font: { family: 'Inter', size: 11 } }, grid: { color: borderSoft } },
+      y: { ticks: { color: textDim, font: { family: 'IBM Plex Mono', size: 10 } }, grid: { color: borderSoft } },
+    },
+  };
+}
 
 function desenharGraficos(dados) {
   if (typeof Chart === 'undefined') {
@@ -291,6 +337,10 @@ function desenharGraficos(dados) {
   }
 
   const labels = dados.serie.map((m) => labelMes(m.mes));
+  const opcoesBase = getOpcoesChartBase();
+  const corVerde = corVar('--accent-green');
+  const corVermelho = corVar('--accent-red');
+  const corAmbar = corVar('--accent-amber');
 
   Object.values(charts).forEach((c) => c && c.destroy());
 
@@ -303,14 +353,14 @@ function desenharGraficos(dados) {
         datasets: [{
           label: 'Saldo',
           data: dados.serie.map((m) => m.saldo),
-          borderColor: '#4CC38A',
-          backgroundColor: 'rgba(76,195,138,0.15)',
+          borderColor: corVerde,
+          backgroundColor: corVerde + '26',
           fill: true,
           tension: 0.3,
-          pointBackgroundColor: '#4CC38A',
+          pointBackgroundColor: corVerde,
         }],
       },
-      options: { ...OPCOES_CHART_BASE, plugins: { legend: { display: false } } },
+      options: { ...opcoesBase, plugins: { legend: { display: false } } },
     });
   }
 
@@ -321,17 +371,17 @@ function desenharGraficos(dados) {
       data: {
         labels,
         datasets: [
-          { label: 'Entradas', data: dados.serie.map((m) => m.entradas), backgroundColor: '#4CC38A' },
-          { label: 'Saídas', data: dados.serie.map((m) => m.saidas), backgroundColor: '#E2574C' },
+          { label: 'Entradas', data: dados.serie.map((m) => m.entradas), backgroundColor: corVerde },
+          { label: 'Saídas', data: dados.serie.map((m) => m.saidas), backgroundColor: corVermelho },
         ],
       },
-      options: OPCOES_CHART_BASE,
+      options: opcoesBase,
     });
   }
 
   const ctxCat = document.getElementById('chart-categorias');
   if (ctxCat && dados.topCategorias && dados.topCategorias.length) {
-    const cores = ['#4CC38A', '#E3A548', '#5B8DEF', '#E2574C', '#B679D6'];
+    const cores = [corVerde, corAmbar, '#5B8DEF', corVermelho, '#B679D6'];
     charts.categorias = new Chart(ctxCat, {
       type: 'line',
       data: {
@@ -345,7 +395,7 @@ function desenharGraficos(dados) {
           pointRadius: 3,
         })),
       },
-      options: OPCOES_CHART_BASE,
+      options: opcoesBase,
     });
   }
 }
