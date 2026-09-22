@@ -57,8 +57,9 @@
   .barra-linha { margin-bottom:10px; }
   .barra-topo { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
   .barra-valor { font-family:'IBM Plex Mono', monospace; color:var(--text-dim2); }
-  .barra-track { height:7px; border-radius:6px; overflow:hidden; background:var(--track-bg); }
+  .barra-track { height:7px; border-radius:6px; overflow:hidden; background:var(--track-bg); position:relative; }
   .barra-fill { height:100%; border-radius:6px; }
+  .barra-limite { position:absolute; top:0; bottom:0; width:2px; background:var(--text); opacity:0.65; }
   .vazio { color:var(--text-dim2); font-size:13px; padding:24px 14px; text-align:center; }
   .btn { background:var(--accent-green); color:#0F1310; border:none; border-radius:10px; padding:10px 16px; font-weight:600; cursor:pointer; font-size:13px; }
   .btn-ghost { background:transparent; color:var(--text-dim); border:1px solid var(--border); border-radius:8px; padding:8px 12px; cursor:pointer; font-size:12.5px; }
@@ -111,6 +112,8 @@ let estado = {
   resumo: null,
   transacoes: [],
   serieMensal: null,
+  dividas: [],
+  orcamentos: [],
   carregando: true,
   erro: null,
 };
@@ -125,16 +128,22 @@ async function carregarDados() {
   render();
   try {
     const base = cfg.workerUrl.replace(/\/$/, '');
-    const [resResumo, resTx, resSerie] = await Promise.all([
+    const [resResumo, resTx, resSerie, resDividas, resOrcamento] = await Promise.all([
       fetch(base + '/api/resumo?periodo=' + estado.periodo + '&token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/transacoes?token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/serie-mensal?meses=6&token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/dividas?token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/orcamento?token=' + encodeURIComponent(cfg.token)),
     ]);
-    if (!resResumo.ok || !resTx.ok || !resSerie.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
+    if (!resResumo.ok || !resTx.ok || !resSerie.ok || !resDividas.ok || !resOrcamento.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
     estado.resumo = await resResumo.json();
     const dadosTx = await resTx.json();
     estado.transacoes = dadosTx.transacoes || [];
     estado.serieMensal = await resSerie.json();
+    const dadosDividas = await resDividas.json();
+    estado.dividas = dadosDividas.dividas || [];
+    const dadosOrcamento = await resOrcamento.json();
+    estado.orcamentos = dadosOrcamento.orcamentos || [];
   } catch (err) {
     estado.erro = err.message || 'Não consegui carregar os dados.';
   } finally {
@@ -190,6 +199,110 @@ function corVar(nome) {
   return getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
 }
 
+function renderCardDividas() {
+  const dividas = estado.dividas || [];
+  if (dividas.length === 0) {
+    return `
+      <div class="card">
+        <div class="chart-titulo">Dívidas</div>
+        <div class="vazio">Nenhuma dívida cadastrada</div>
+      </div>
+    `;
+  }
+
+  const ativas = dividas.filter(d => d.status === 'ativa');
+  const totalDevidoAgora = ativas.reduce((s, d) => s + d.valor_atual, 0);
+  const totalOriginal = dividas.reduce((s, d) => s + d.valor_original, 0);
+  const totalAtualGeral = dividas.reduce((s, d) => s + d.valor_atual, 0);
+  const totalQuitado = totalOriginal - totalAtualGeral;
+  const pctQuitado = totalOriginal > 0 ? Math.min(100, (totalQuitado / totalOriginal) * 100) : 0;
+
+  const listaHtml = ativas.length === 0
+    ? '<div class="vazio">Nenhuma dívida ativa — tudo quitado! 🎉</div>'
+    : ativas.map(d => `
+        <div class="linha">
+          <div class="linha-esq"><div class="desc">${d.descricao}</div></div>
+          <span class="valor" style="color:var(--accent-red);">${fmtMoeda(d.valor_atual)}</span>
+        </div>
+      `).join('');
+
+  return `
+    <div class="card">
+      <div class="chart-titulo">Dívidas</div>
+      <div class="saldo-label">Total devido agora</div>
+      <div class="saldo-valor" style="color:var(--accent-red);">${fmtMoeda(totalDevidoAgora)}</div>
+      <div class="barra-topo"><span>Quitado</span><span class="barra-valor">${pctQuitado.toFixed(0)}% de ${fmtMoeda(totalOriginal)}</span></div>
+      <div class="barra-track"><div class="barra-fill" style="width:${pctQuitado}%; background:var(--accent-green);"></div></div>
+      <div class="feed" style="margin-top:14px; max-height:220px;">${listaHtml}</div>
+    </div>
+  `;
+}
+
+/**
+ * Índice de saúde financeira — fórmula fixa e determinística, sem IA. Média simples de três
+ * sinais, cada um normalizado pra 0-100 e orientado de forma que "mais alto = mais saudável":
+ *  a) % dos meses da série de 6 meses (estado.serieMensal) com saldo positivo.
+ *  b) 100 - (% do gasto do período em categorias redutíveis). Calcula o percentual redutível
+ *     com a MESMA lógica do alerta "Gastos possivelmente redutíveis" (soma das categorias com
+ *     c.reducivel === true, dividido pelo total de saídas do período) e INVERTE o sinal — menos
+ *     gasto redutível é mais saudável, então o percentual bruto entraria de trás pra frente
+ *     numa média simples se não fosse invertido.
+ *  c) % do total histórico já quitado em dívidas: soma (valor_original - valor_atual) de TODAS
+ *     as dívidas (ativas + quitadas) dividido pela soma de valor_original. Sem nenhuma dívida
+ *     cadastrada, conta como 100 — não ter dívida nenhuma é saudável, não neutro.
+ * Faixas do rótulo qualitativo (as únicas três, sem inventar nenhuma a mais):
+ *   0-40 "Atenção" · 41-70 "Estável" · 71-100 "Saudável"
+ */
+function calcularSaudeFinanceira() {
+  if (!estado.serieMensal || !estado.resumo) return null;
+
+  const serie = estado.serieMensal.serie || [];
+  const a = serie.length ? (serie.filter(m => m.saldo > 0).length / serie.length) * 100 : 0;
+
+  const totalGasto = estado.resumo.saidas || 0;
+  const totalReduzivel = (estado.resumo.categorias || []).filter(c => c.reducivel).reduce((s, c) => s + c.valor, 0);
+  const percentualRedutivel = totalGasto > 0 ? (totalReduzivel / totalGasto) * 100 : 0;
+  const b = 100 - percentualRedutivel;
+
+  const dividas = estado.dividas || [];
+  let c;
+  if (dividas.length === 0) {
+    c = 100;
+  } else {
+    const totalOriginal = dividas.reduce((s, d) => s + d.valor_original, 0);
+    const totalAtual = dividas.reduce((s, d) => s + d.valor_atual, 0);
+    c = totalOriginal > 0 ? Math.min(100, ((totalOriginal - totalAtual) / totalOriginal) * 100) : 100;
+  }
+
+  const score = (a + b + c) / 3;
+  // o corte de faixa usa o score ARREDONDADO — é o número que aparece na tela, e o rótulo
+  // precisa concordar com ele (senão dá pra mostrar "40" e "Estável" ao mesmo tempo, quando o
+  // corte diz que 40 já é "Atenção")
+  const scoreArredondado = Math.round(score);
+  const label = scoreArredondado <= 40 ? 'Atenção' : scoreArredondado <= 70 ? 'Estável' : 'Saudável';
+  const cor = scoreArredondado <= 40 ? 'var(--accent-red)' : scoreArredondado <= 70 ? 'var(--accent-amber)' : 'var(--accent-green)';
+  return { score, label, cor, a, b, c };
+}
+
+function renderCardSaude() {
+  const saude = calcularSaudeFinanceira();
+  if (!saude) {
+    return `<div class="card"><div class="chart-titulo">Índice de saúde financeira</div><div class="vazio">Carregando…</div></div>`;
+  }
+  return `
+    <div class="card">
+      <div class="chart-titulo">Índice de saúde financeira</div>
+      <div class="saldo-valor" style="color:${saude.cor};">${saude.score.toFixed(0)}<span style="font-size:14px; color:var(--text-dim); font-weight:500;"> / 100</span></div>
+      <div class="mini-label" style="margin-bottom:12px;">${saude.label}</div>
+      <div class="duas-colunas">
+        <div><div class="mini-label">Meses no azul</div><div class="mini-valor">${saude.a.toFixed(0)}%</div></div>
+        <div><div class="mini-label">Gasto essencial</div><div class="mini-valor">${saude.b.toFixed(0)}%</div></div>
+        <div><div class="mini-label">Dívidas quitadas</div><div class="mini-valor">${saude.c.toFixed(0)}%</div></div>
+      </div>
+    </div>
+  `;
+}
+
 function render() {
   const cfg = getConfig();
   if (!cfg) { renderSetup(); return; }
@@ -201,12 +314,24 @@ function render() {
   let alertaHtml = '';
   if (estado.resumo && estado.resumo.categorias && estado.resumo.categorias.length) {
     const maior = Math.max(...estado.resumo.categorias.map(c => c.valor));
-    categoriasHtml = estado.resumo.categorias.map(c => `
+    const orcamentoPorCategoria = {};
+    (estado.orcamentos || []).forEach(o => { if (o.categoria) orcamentoPorCategoria[o.categoria] = o; });
+
+    categoriasHtml = estado.resumo.categorias.map(c => {
+      const orc = orcamentoPorCategoria[c.nome];
+      // a marca de limite é posicionada na MESMA escala da barra (relativa ao maior gasto do
+      // período) — se o limite for maior que o maior gasto atual, ela fica cravada em 100%
+      const marcaLimite = orc ? Math.min(100, (orc.limiteMensal / maior) * 100) : null;
+      return `
       <div class="barra-linha">
-        <div class="barra-topo"><span>${c.nome}</span><span class="barra-valor">${fmtMoeda(c.valor)}</span></div>
-        <div class="barra-track"><div class="barra-fill" style="width:${(c.valor/maior*100)}%; background:${c.reducivel ? 'var(--accent-amber)' : 'var(--accent-green)'};"></div></div>
+        <div class="barra-topo"><span>${c.nome}</span><span class="barra-valor">${fmtMoeda(c.valor)}${orc ? ' / ' + fmtMoeda(orc.limiteMensal) : ''}</span></div>
+        <div class="barra-track">
+          <div class="barra-fill" style="width:${(c.valor/maior*100)}%; background:${c.reducivel ? 'var(--accent-amber)' : 'var(--accent-green)'};"></div>
+          ${marcaLimite !== null ? `<div class="barra-limite" style="left:${marcaLimite}%;" title="Orçamento: ${fmtMoeda(orc.limiteMensal)}"></div>` : ''}
+        </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     const reduziveis = estado.resumo.categorias.filter(c => c.reducivel);
     const totalReduzivel = reduziveis.reduce((s,c) => s + c.valor, 0);
@@ -285,6 +410,10 @@ function render() {
     </div>
 
     ${estado.serieMensal ? `
+    <div class="charts-row">
+      ${renderCardDividas()}
+      ${renderCardSaude()}
+    </div>
     <div class="charts-row">
       <div class="card">
         <div class="chart-titulo">Evolução do saldo (últimos 6 meses)</div>
