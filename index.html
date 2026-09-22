@@ -438,7 +438,11 @@ function renderAbaMercado() {
     if (!dado || dado.valor === null || dado.valor === undefined) {
       return `<div><div class="mini-label">${label}</div><div class="mini-valor">—</div></div>`;
     }
-    const cor = (dado.variacao || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    // só colore de verde/vermelho quando existe variação de verdade — sem isso (dólar e Selic,
+    // que vêm do Banco Central sem variação diária na mesma chamada), fica na cor neutra do
+    // texto, pra não parecer "em alta" sem ter nenhum dado de tendência
+    const temVariacao = dado.variacao !== null && dado.variacao !== undefined && !isNaN(dado.variacao);
+    const cor = temVariacao ? (dado.variacao >= 0 ? 'var(--accent-green)' : 'var(--accent-red)') : 'var(--text)';
     return `<div><div class="mini-label">${label}</div><div class="mini-valor" style="color:${cor};">${formatador(dado.valor)}${fmtPct(dado.variacao)}</div></div>`;
   };
 
