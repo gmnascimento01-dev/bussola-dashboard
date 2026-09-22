@@ -73,6 +73,8 @@
   .charts-row.full { grid-template-columns:1fr; }
   .chart-titulo { font-size:12.5px; color:var(--text-dim); margin-bottom:12px; font-weight:600; }
   .chart-box { position:relative; height:220px; }
+  .nav-abas { max-width:1080px; margin:16px auto 0; }
+  .full-largura { max-width:1080px; margin:16px auto 0; }
 </style>
 <script>
   // Aplica o tema salvo antes de pintar a página, pra evitar flash de tema errado
@@ -107,13 +109,29 @@ function fmtMoeda(v) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+const ABAS = [
+  ['resumo', 'Resumo'],
+  ['dividas', 'Dívidas'],
+  ['orcamento', 'Orçamento'],
+  ['saude', 'Saúde Financeira'],
+  ['investimentos', 'Investimentos'],
+  ['mercado', 'Mercado'],
+];
+
 let estado = {
+  abaAtiva: 'resumo',
   periodo: 'mes',
   resumo: null,
   transacoes: [],
   serieMensal: null,
   dividas: [],
   orcamentos: [],
+  investimentos: [],
+  investimentosTotal: 0,
+  mercadoCotacoes: null,
+  mercadoManchetes: null,
+  mercadoCarregando: false,
+  mercadoErro: null,
   carregando: true,
   erro: null,
 };
@@ -128,14 +146,17 @@ async function carregarDados() {
   render();
   try {
     const base = cfg.workerUrl.replace(/\/$/, '');
-    const [resResumo, resTx, resSerie, resDividas, resOrcamento] = await Promise.all([
+    const [resResumo, resTx, resSerie, resDividas, resOrcamento, resInvestimentos] = await Promise.all([
       fetch(base + '/api/resumo?periodo=' + estado.periodo + '&token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/transacoes?token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/serie-mensal?meses=6&token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/dividas?token=' + encodeURIComponent(cfg.token)),
       fetch(base + '/api/orcamento?token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/investimentos?token=' + encodeURIComponent(cfg.token)),
     ]);
-    if (!resResumo.ok || !resTx.ok || !resSerie.ok || !resDividas.ok || !resOrcamento.ok) throw new Error('Falha ao buscar dados (verifique a URL e o token)');
+    if (!resResumo.ok || !resTx.ok || !resSerie.ok || !resDividas.ok || !resOrcamento.ok || !resInvestimentos.ok) {
+      throw new Error('Falha ao buscar dados (verifique a URL e o token)');
+    }
     estado.resumo = await resResumo.json();
     const dadosTx = await resTx.json();
     estado.transacoes = dadosTx.transacoes || [];
@@ -144,11 +165,48 @@ async function carregarDados() {
     estado.dividas = dadosDividas.dividas || [];
     const dadosOrcamento = await resOrcamento.json();
     estado.orcamentos = dadosOrcamento.orcamentos || [];
+    const dadosInvestimentos = await resInvestimentos.json();
+    estado.investimentos = dadosInvestimentos.investimentos || [];
+    estado.investimentosTotal = dadosInvestimentos.total || 0;
   } catch (err) {
     estado.erro = err.message || 'Não consegui carregar os dados.';
   } finally {
     estado.carregando = false;
     render();
+  }
+}
+
+/** Mercado é buscado à parte (só quando a aba abre), porque envolve chamadas externas
+ * (brapi.dev + RSS) mais lentas e que não fazem sentido rodar toda vez que o período muda. */
+async function carregarMercado() {
+  const cfg = getConfig();
+  if (!cfg) return;
+  estado.mercadoCarregando = true;
+  estado.mercadoErro = null;
+  render();
+  try {
+    const base = cfg.workerUrl.replace(/\/$/, '');
+    const [resCotacoes, resManchetes] = await Promise.all([
+      fetch(base + '/api/mercado/cotacoes?token=' + encodeURIComponent(cfg.token)),
+      fetch(base + '/api/mercado/manchetes?token=' + encodeURIComponent(cfg.token)),
+    ]);
+    if (!resCotacoes.ok || !resManchetes.ok) throw new Error('Falha ao buscar dados de mercado.');
+    estado.mercadoCotacoes = await resCotacoes.json();
+    const dadosManchetes = await resManchetes.json();
+    estado.mercadoManchetes = dadosManchetes.manchetes || [];
+  } catch (err) {
+    estado.mercadoErro = err.message || 'Não consegui carregar os dados de mercado.';
+  } finally {
+    estado.mercadoCarregando = false;
+    render();
+  }
+}
+
+function trocarAba(aba) {
+  estado.abaAtiva = aba;
+  render();
+  if (aba === 'mercado' && !estado.mercadoCotacoes && !estado.mercadoManchetes && !estado.mercadoCarregando) {
+    carregarMercado();
   }
 }
 
@@ -192,14 +250,22 @@ function alternarTema() {
   const novo = getTema() === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', novo);
   localStorage.setItem('bussola-tema', novo);
-  render();
-  if (estado.serieMensal) desenharGraficos(estado.serieMensal);
+  render(); // já redesenha os gráficos da aba atual sozinho, no final da própria função
 }
 function corVar(nome) {
   return getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
 }
 
-function renderCardDividas() {
+/** Gasto médio dos meses com movimento na série de 6 meses — mesma ideia usada no plano de
+ * quitação de dívidas do bot, só que aqui só pra informar "quantos meses o patrimônio cobre". */
+function calcularGastoMedioMensal() {
+  if (!estado.serieMensal) return null;
+  const comMovimento = (estado.serieMensal.serie || []).filter(m => m.entradas > 0 || m.saidas > 0);
+  if (comMovimento.length === 0) return null;
+  return comMovimento.reduce((s, m) => s + m.saidas, 0) / comMovimento.length;
+}
+
+function renderAbaDividas() {
   const dividas = estado.dividas || [];
   if (dividas.length === 0) {
     return `
@@ -221,7 +287,10 @@ function renderCardDividas() {
     ? '<div class="vazio">Nenhuma dívida ativa — tudo quitado! 🎉</div>'
     : ativas.map(d => `
         <div class="linha">
-          <div class="linha-esq"><div class="desc">${d.descricao}</div></div>
+          <div class="linha-esq">
+            <div class="desc">${d.descricao}</div>
+            ${d.taxa_juros_mensal || d.parcela_mensal ? `<div class="meta-linha">${d.taxa_juros_mensal ? 'juros ' + d.taxa_juros_mensal + '%/mês' : ''}${d.taxa_juros_mensal && d.parcela_mensal ? ' · ' : ''}${d.parcela_mensal ? 'parcela ' + fmtMoeda(d.parcela_mensal) : ''}</div>` : ''}
+          </div>
           <span class="valor" style="color:var(--accent-red);">${fmtMoeda(d.valor_atual)}</span>
         </div>
       `).join('');
@@ -233,7 +302,7 @@ function renderCardDividas() {
       <div class="saldo-valor" style="color:var(--accent-red);">${fmtMoeda(totalDevidoAgora)}</div>
       <div class="barra-topo"><span>Quitado</span><span class="barra-valor">${pctQuitado.toFixed(0)}% de ${fmtMoeda(totalOriginal)}</span></div>
       <div class="barra-track"><div class="barra-fill" style="width:${pctQuitado}%; background:var(--accent-green);"></div></div>
-      <div class="feed" style="margin-top:14px; max-height:220px;">${listaHtml}</div>
+      <div class="feed" style="margin-top:14px; max-height:400px;">${listaHtml}</div>
     </div>
   `;
 }
@@ -284,7 +353,7 @@ function calcularSaudeFinanceira() {
   return { score, label, cor, a, b, c };
 }
 
-function renderCardSaude() {
+function renderAbaSaude() {
   const saude = calcularSaudeFinanceira();
   if (!saude) {
     return `<div class="card"><div class="chart-titulo">Índice de saúde financeira</div><div class="vazio">Carregando…</div></div>`;
@@ -292,8 +361,8 @@ function renderCardSaude() {
   return `
     <div class="card">
       <div class="chart-titulo">Índice de saúde financeira</div>
-      <div class="saldo-valor" style="color:${saude.cor};">${saude.score.toFixed(0)}<span style="font-size:14px; color:var(--text-dim); font-weight:500;"> / 100</span></div>
-      <div class="mini-label" style="margin-bottom:12px;">${saude.label}</div>
+      <div class="saldo-valor" style="color:${saude.cor}; font-size:44px;">${saude.score.toFixed(0)}<span style="font-size:16px; color:var(--text-dim); font-weight:500;"> / 100</span></div>
+      <div class="mini-label" style="margin-bottom:18px;">${saude.label}</div>
       <div class="duas-colunas">
         <div><div class="mini-label">Meses no azul</div><div class="mini-valor">${saude.a.toFixed(0)}%</div></div>
         <div><div class="mini-label">Gasto essencial</div><div class="mini-valor">${saude.b.toFixed(0)}%</div></div>
@@ -303,13 +372,168 @@ function renderCardSaude() {
   `;
 }
 
-function render() {
-  const cfg = getConfig();
-  if (!cfg) { renderSetup(); return; }
+function renderAbaInvestimentos() {
+  const investimentos = estado.investimentos || [];
+  if (investimentos.length === 0) {
+    return `<div class="card"><div class="chart-titulo">Investimentos</div><div class="vazio">Nenhum investimento registrado</div></div>`;
+  }
 
-  const app = document.getElementById('app');
-  const periodos = [['dia','Dia'],['semana','Semana'],['mes','Mês'],['ano','Ano']];
+  const total = estado.investimentosTotal || investimentos.reduce((s, i) => s + i.valor, 0);
+  const porTipo = {};
+  investimentos.forEach(i => { porTipo[i.tipo] = (porTipo[i.tipo] || 0) + i.valor; });
+  const tipos = Object.entries(porTipo).sort((a, b) => b[1] - a[1]);
+  const maiorTipo = Math.max(...tipos.map(([, v]) => v));
 
+  const gastoMedio = calcularGastoMedioMensal();
+  const meses = gastoMedio && gastoMedio > 0 ? total / gastoMedio : null;
+
+  const listaHtml = investimentos.map(i => `
+    <div class="linha">
+      <div class="linha-esq"><div><div class="desc">${i.descricao}</div><div class="meta-linha">${i.tipo}</div></div></div>
+      <span class="valor" style="color:var(--accent-green);">${fmtMoeda(i.valor)}</span>
+    </div>
+  `).join('');
+
+  return `
+    <div class="charts-row">
+      <div class="card">
+        <div class="chart-titulo">Investimentos</div>
+        <div class="saldo-label">Total registrado</div>
+        <div class="saldo-valor" style="color:var(--accent-green);">${fmtMoeda(total)}</div>
+        ${meses !== null ? `<div class="mini-label">Isso cobre ~${meses.toFixed(1)} meses do seu gasto médio</div>` : ''}
+        <div style="border-top:1px solid var(--border-soft); padding-top:12px; margin-top:14px;">
+          <div class="categorias-titulo">Por tipo</div>
+          ${tipos.map(([tipo, valor]) => `
+            <div class="barra-linha">
+              <div class="barra-topo"><span>${tipo}</span><span class="barra-valor">${fmtMoeda(valor)}</span></div>
+              <div class="barra-track"><div class="barra-fill" style="width:${(valor/maiorTipo*100)}%; background:var(--accent-green);"></div></div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="card">
+        <div class="chart-titulo">Todos os registros</div>
+        <div class="feed" style="max-height:400px;">${listaHtml}</div>
+      </div>
+    </div>
+    <div style="font-size:12px; color:var(--text-dim2); margin-top:14px; padding:0 4px; max-width:1080px;">
+      Isso é só um registro do que você declarou ter — não é avaliação nem recomendação de investimento.
+    </div>
+  `;
+}
+
+function renderAbaMercado() {
+  if (estado.mercadoCarregando) {
+    return `<div class="card"><div class="vazio">Carregando cotações e notícias…</div></div>`;
+  }
+  if (estado.mercadoErro) {
+    return `<div class="erro">${estado.mercadoErro}</div>`;
+  }
+
+  const cot = estado.mercadoCotacoes;
+  const manchetes = estado.mercadoManchetes || [];
+  const fmtPct = (v) => (v === null || v === undefined || isNaN(v)) ? '' : ` (${v >= 0 ? '+' : ''}${v.toFixed(2)}%)`;
+
+  const blocoCotacao = (label, dado, formatador) => {
+    if (!dado || dado.valor === null || dado.valor === undefined) {
+      return `<div><div class="mini-label">${label}</div><div class="mini-valor">—</div></div>`;
+    }
+    const cor = (dado.variacao || 0) >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    return `<div><div class="mini-label">${label}</div><div class="mini-valor" style="color:${cor};">${formatador(dado.valor)}${fmtPct(dado.variacao)}</div></div>`;
+  };
+
+  const manchetesHtml = manchetes.length === 0
+    ? '<div class="vazio">Nenhuma manchete disponível agora.</div>'
+    : manchetes.map(m => `
+        <a href="${m.link}" target="_blank" rel="noopener noreferrer" class="linha" style="text-decoration:none; color:inherit;">
+          <div class="desc">${m.titulo}</div>
+          <span style="color:var(--text-dim2); font-size:16px;">↗</span>
+        </a>
+      `).join('');
+
+  return `
+    <div class="card">
+      <div class="chart-titulo">Cotações</div>
+      <div class="duas-colunas">
+        ${blocoCotacao('Ibovespa', cot && cot.ibovespa, (v) => v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }))}
+        ${blocoCotacao('Dólar (USD/BRL)', cot && cot.dolar, (v) => 'R$ ' + v.toFixed(2).replace('.', ','))}
+        ${blocoCotacao('Selic', cot && cot.selic, (v) => v.toFixed(2).replace('.', ',') + '%')}
+      </div>
+      <div style="font-size:11px; color:var(--text-dim2); margin-top:14px;">Cotações atualizadas a cada carregamento da página — não é tempo real.</div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="chart-titulo">Manchetes</div>
+      <div class="feed">${manchetesHtml}</div>
+      <div style="font-size:11px; color:var(--text-dim2); margin-top:10px;">Fonte: Money Times. Só título e link — o conteúdo completo está no site original.</div>
+    </div>
+  `;
+}
+
+function renderAbaResumo() {
+  const periodos = [['dia', 'Dia'], ['semana', 'Semana'], ['mes', 'Mês'], ['ano', 'Ano']];
+
+  const feedHtml = estado.transacoes.length === 0
+    ? '<div class="vazio">Nenhum lançamento ainda.</div>'
+    : estado.transacoes.map(t => {
+        const cor = t.tipo === 'entrada' ? 'var(--accent-green)' : 'var(--accent-red)';
+        const data = new Date(t.data_hora);
+        return `
+          <div class="linha">
+            <div class="linha-esq">
+              <span class="dot" style="background:${cor};"></span>
+              <div>
+                <div class="desc">${t.descricao || t.texto}</div>
+                <div class="meta-linha">${data.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} · ${data.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="chip">${t.categoria}</span>
+              <span class="valor" style="color:${cor};">${t.tipo === 'entrada' ? '+' : '−'} ${fmtMoeda(t.valor)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+  return `
+    <div class="grid">
+      <div>
+        <div class="feed">
+          ${estado.carregando ? '<div class="vazio">Carregando…</div>' : feedHtml}
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <div class="tabs">
+            ${periodos.map(([p,label]) => `<button class="tab ${estado.periodo===p?'ativa':''}" onclick="trocarPeriodo('${p}')">${label}</button>`).join('')}
+          </div>
+          ${estado.resumo ? `
+            <div class="saldo-label">Saldo do período</div>
+            <div class="saldo-valor" style="color:${estado.resumo.saldo>=0?'var(--accent-green)':'var(--accent-red)'};">${fmtMoeda(estado.resumo.saldo)}</div>
+            <div class="duas-colunas">
+              <div><div class="mini-label">Entradas</div><div class="mini-valor" style="color:var(--accent-green);">${fmtMoeda(estado.resumo.entradas)}</div></div>
+              <div><div class="mini-label">Saídas</div><div class="mini-valor" style="color:var(--accent-red);">${fmtMoeda(estado.resumo.saidas)}</div></div>
+            </div>
+          ` : '<div class="vazio">Carregando…</div>'}
+        </div>
+      </div>
+    </div>
+
+    ${estado.serieMensal ? `
+    <div class="charts-row">
+      <div class="card">
+        <div class="chart-titulo">Evolução do saldo (últimos 6 meses)</div>
+        <div class="chart-box"><canvas id="chart-saldo"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="chart-titulo">Entradas x saídas por mês</div>
+        <div class="chart-box"><canvas id="chart-entradas-saidas"></canvas></div>
+      </div>
+    </div>
+    ` : ''}
+  `;
+}
+
+function renderAbaOrcamento() {
   let categoriasHtml = '';
   let alertaHtml = '';
   if (estado.resumo && estado.resumo.categorias && estado.resumo.categorias.length) {
@@ -348,28 +572,53 @@ function render() {
     }
   }
 
-  const feedHtml = estado.transacoes.length === 0
-    ? '<div class="vazio">Nenhum lançamento ainda.</div>'
-    : estado.transacoes.map(t => {
-        const cor = t.tipo === 'entrada' ? 'var(--accent-green)' : 'var(--accent-red)';
-        const data = new Date(t.data_hora);
-        return `
-          <div class="linha">
-            <div class="linha-esq">
-              <span class="dot" style="background:${cor};"></span>
-              <div>
-                <div class="desc">${t.descricao || t.texto}</div>
-                <div class="meta-linha">${data.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} · ${data.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
-              </div>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <span class="chip">${t.categoria}</span>
-              <span class="valor" style="color:${cor};">${t.tipo === 'entrada' ? '+' : '−'} ${fmtMoeda(t.valor)}</span>
-            </div>
-          </div>
-        `;
-      }).join('');
+  return `
+    <div class="grid">
+      <div class="card">
+        <div class="chart-titulo">Por categoria</div>
+        ${categoriasHtml || '<div class="vazio">Sem lançamentos neste período.</div>'}
+      </div>
+      <div>${alertaHtml}</div>
+    </div>
+    ${estado.serieMensal ? `
+    <div class="charts-row full">
+      <div class="card">
+        <div class="chart-titulo">Categorias ao longo do tempo (top 5)</div>
+        <div class="chart-box"><canvas id="chart-categorias"></canvas></div>
+      </div>
+    </div>
+    ` : ''}
+  `;
+}
 
+function renderAbaAtiva() {
+  switch (estado.abaAtiva) {
+    case 'dividas': return `<div class="full-largura">${renderAbaDividas()}</div>`;
+    case 'orcamento': return renderAbaOrcamento();
+    case 'saude': return `<div class="full-largura">${renderAbaSaude()}</div>`;
+    case 'investimentos': return `<div class="full-largura">${renderAbaInvestimentos()}</div>`;
+    case 'mercado': return `<div class="full-largura">${renderAbaMercado()}</div>`;
+    default: return renderAbaResumo();
+  }
+}
+
+function destruirGraficos() {
+  Object.keys(charts).forEach((k) => { if (charts[k]) charts[k].destroy(); delete charts[k]; });
+}
+
+function redesenharGraficosDaAbaAtiva() {
+  if (!estado.serieMensal) return;
+  if (estado.abaAtiva === 'resumo') desenharGraficosResumo(estado.serieMensal);
+  if (estado.abaAtiva === 'orcamento') desenharGraficoCategorias(estado.serieMensal);
+}
+
+function render() {
+  const cfg = getConfig();
+  if (!cfg) { renderSetup(); return; }
+
+  destruirGraficos();
+
+  const app = document.getElementById('app');
   app.innerHTML = `
     <div class="header-row">
       <div>
@@ -384,56 +633,16 @@ function render() {
 
     ${estado.erro ? `<div class="erro" style="max-width:1080px; margin:14px auto 0;">${estado.erro}</div>` : ''}
 
-    <div class="grid">
-      <div>
-        <div class="feed">
-          ${estado.carregando ? '<div class="vazio">Carregando…</div>' : feedHtml}
-        </div>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:14px;">
-        <div class="card">
-          <div class="tabs">
-            ${periodos.map(([p,label]) => `<button class="tab ${estado.periodo===p?'ativa':''}" onclick="trocarPeriodo('${p}')">${label}</button>`).join('')}
-          </div>
-          ${estado.resumo ? `
-            <div class="saldo-label">Saldo do período</div>
-            <div class="saldo-valor" style="color:${estado.resumo.saldo>=0?'var(--accent-green)':'var(--accent-red)'};">${fmtMoeda(estado.resumo.saldo)}</div>
-            <div class="duas-colunas">
-              <div><div class="mini-label">Entradas</div><div class="mini-valor" style="color:var(--accent-green);">${fmtMoeda(estado.resumo.entradas)}</div></div>
-              <div><div class="mini-label">Saídas</div><div class="mini-valor" style="color:var(--accent-red);">${fmtMoeda(estado.resumo.saidas)}</div></div>
-            </div>
-            ${categoriasHtml ? `<div style="border-top:1px solid #202820; padding-top:12px; margin-top:14px;"><div class="categorias-titulo">Por categoria</div>${categoriasHtml}</div>` : ''}
-          ` : '<div class="vazio">Carregando…</div>'}
-        </div>
-        ${alertaHtml}
+    <div class="nav-abas">
+      <div class="tabs">
+        ${ABAS.map(([id,label]) => `<button class="tab ${estado.abaAtiva===id?'ativa':''}" onclick="trocarAba('${id}')">${label}</button>`).join('')}
       </div>
     </div>
 
-    ${estado.serieMensal ? `
-    <div class="charts-row">
-      ${renderCardDividas()}
-      ${renderCardSaude()}
-    </div>
-    <div class="charts-row">
-      <div class="card">
-        <div class="chart-titulo">Evolução do saldo (últimos 6 meses)</div>
-        <div class="chart-box"><canvas id="chart-saldo"></canvas></div>
-      </div>
-      <div class="card">
-        <div class="chart-titulo">Entradas x saídas por mês</div>
-        <div class="chart-box"><canvas id="chart-entradas-saidas"></canvas></div>
-      </div>
-    </div>
-    <div class="charts-row full">
-      <div class="card">
-        <div class="chart-titulo">Categorias ao longo do tempo (top 5)</div>
-        <div class="chart-box"><canvas id="chart-categorias"></canvas></div>
-      </div>
-    </div>
-    ` : ''}
+    ${renderAbaAtiva()}
   `;
 
-  if (estado.serieMensal) desenharGraficos(estado.serieMensal);
+  redesenharGraficosDaAbaAtiva();
 }
 
 function labelMes(chave) {
@@ -456,22 +665,22 @@ function getOpcoesChartBase() {
   };
 }
 
-function desenharGraficos(dados) {
-  if (typeof Chart === 'undefined') {
-    ['chart-saldo', 'chart-entradas-saidas', 'chart-categorias'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.parentElement.innerHTML = '<div class="vazio">Não consegui carregar a biblioteca de gráficos (Chart.js). Tenta recarregar a página.</div>';
-    });
-    return;
-  }
+function chartJsIndisponivel(ids) {
+  if (typeof Chart !== 'undefined') return false;
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.parentElement.innerHTML = '<div class="vazio">Não consegui carregar a biblioteca de gráficos (Chart.js). Tenta recarregar a página.</div>';
+  });
+  return true;
+}
+
+function desenharGraficosResumo(dados) {
+  if (chartJsIndisponivel(['chart-saldo', 'chart-entradas-saidas'])) return;
 
   const labels = dados.serie.map((m) => labelMes(m.mes));
   const opcoesBase = getOpcoesChartBase();
   const corVerde = corVar('--accent-green');
   const corVermelho = corVar('--accent-red');
-  const corAmbar = corVar('--accent-amber');
-
-  Object.values(charts).forEach((c) => c && c.destroy());
 
   const ctxSaldo = document.getElementById('chart-saldo');
   if (ctxSaldo) {
@@ -507,6 +716,16 @@ function desenharGraficos(dados) {
       options: opcoesBase,
     });
   }
+}
+
+function desenharGraficoCategorias(dados) {
+  if (chartJsIndisponivel(['chart-categorias'])) return;
+
+  const labels = dados.serie.map((m) => labelMes(m.mes));
+  const opcoesBase = getOpcoesChartBase();
+  const corVerde = corVar('--accent-green');
+  const corVermelho = corVar('--accent-red');
+  const corAmbar = corVar('--accent-amber');
 
   const ctxCat = document.getElementById('chart-categorias');
   if (ctxCat && dados.topCategorias && dados.topCategorias.length) {
